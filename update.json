@@ -1,11 +1,19 @@
 {
   "version": "0.1.1",
-  "notes": "Bug fixes and performance improvements",
-  "pub_date": "2026-07-14T00:00:00Z",
+  "notes": "See the assets to download this version and install.",
+  "pub_date": "2026-07-14T16:56:39.261Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "SIGNATURE_GENERATED_BY_TAURI_DURING_BUILD",
-      "url": "https://github.com/username/jshub/releases/download/v0.1.1/jshub_0.1.1_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTU2t2SGF0Tlk1WVFnQ0YxSVFMZTJvbXhiR0RtQjZKVUtTb1FRWHpLcEtpb3BrZTg0QUJ4ZjBRTXp1NnJMQzBFTDgrTGtPeFBVVmR5b21FNEZ5eFMyWlRzSVREOFdQUkEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MDQ4MTk2CWZpbGU6SlNIdWJfMC4xLjFfeDY0X2VuLVVTLm1zaQpIbGpCaE93MVRuWDFrSHdOYk9vakQ5WTd1ZWJVcGZEK095cmhCQ1h5QXdiaWZUd3htNUVBY0dpdEc3TGVXSEgwbk51b1BvQU9jZmEzbWhJZUdFZ0FDQT09Cg==",
+      "url": "https://github.com/andangdj/JSHub/releases/download/v0.1.1/JSHub_0.1.1_x64_en-US.msi"
+    },
+    "windows-x86_64-msi": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTU2t2SGF0Tlk1WVFnQ0YxSVFMZTJvbXhiR0RtQjZKVUtTb1FRWHpLcEtpb3BrZTg0QUJ4ZjBRTXp1NnJMQzBFTDgrTGtPeFBVVmR5b21FNEZ5eFMyWlRzSVREOFdQUkEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MDQ4MTk2CWZpbGU6SlNIdWJfMC4xLjFfeDY0X2VuLVVTLm1zaQpIbGpCaE93MVRuWDFrSHdOYk9vakQ5WTd1ZWJVcGZEK095cmhCQ1h5QXdiaWZUd3htNUVBY0dpdEc3TGVXSEgwbk51b1BvQU9jZmEzbWhJZUdFZ0FDQT09Cg==",
+      "url": "https://github.com/andangdj/JSHub/releases/download/v0.1.1/JSHub_0.1.1_x64_en-US.msi"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTU2t2SGF0Tlk1WWM3THJzUW85MHptSlhoMUpwMEhlTEZKNTFnN1V5N3VZMTYxd0VGcGlqNzk4M0xPZTBhdzNEam8wRDFQdzkxMU1aYk5BTVZLTEJSTnN4aCtlNkVIOFFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MDQ4MTk2CWZpbGU6SlNIdWJfMC4xLjFfeDY0LXNldHVwLmV4ZQpmTkNjaGswZEp1Unp6Q3AvcHd5dWlkVmVzVG9pQlhCV1ltazFGTlN0SkVMVUNGVzZHZVQ5NG5nK2ZaVDlaUkRucHdCNGw5dkNBS3J5cHBmVW5FTThEdz09Cg==",
+      "url": "https://github.com/andangdj/JSHub/releases/download/v0.1.1/JSHub_0.1.1_x64-setup.exe"
     }
   }
 }
