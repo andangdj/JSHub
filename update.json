@@ -1,0 +1,11 @@
+{
+  "version": "0.1.1",
+  "notes": "Bug fixes and performance improvements",
+  "pub_date": "2026-07-14T00:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "SIGNATURE_GENERATED_BY_TAURI_DURING_BUILD",
+      "url": "https://github.com/username/jshub/releases/download/v0.1.1/jshub_0.1.1_x64_en-US.msi"
+    }
+  }
+}

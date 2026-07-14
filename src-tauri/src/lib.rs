@@ -1,0 +1,390 @@
+use std::sync::Mutex;
+use std::process::{Command, Stdio};
+use std::io::{BufReader, BufRead};
+use std::fs;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+use tauri::{AppHandle, Emitter, State, Manager};
+use serde::{Deserialize, Serialize};
+
+#[derive(Default)]
+struct AppState {
+    processes: Mutex<std::collections::HashMap<String, u32>>,
+    config_path: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Config {
+    projects_base: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct LogEntry {
+    time: String,
+    line: String,
+    #[serde(rename = "type")]
+    log_type: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ProjectStatus {
+    running: bool,
+    pid: Option<u32>,
+    port: Option<u16>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ProjectInfo {
+    name: String,
+    path: String,
+    framework: String,
+    port: u16,
+    is_running: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct LogPayload {
+    project: String,
+    entry: LogEntry,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct StatusPayload {
+    project: String,
+    status: ProjectStatus,
+}
+
+fn get_config_file(app: &AppHandle) -> String {
+    let mut path = app.path().app_data_dir().unwrap();
+    fs::create_dir_all(&path).ok();
+    path.push("config.json");
+    path.to_string_lossy().to_string()
+}
+
+#[tauri::command]
+fn get_config(_state: State<AppState>, app: AppHandle) -> Config {
+    let path = get_config_file(&app);
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(cfg) = serde_json::from_str(&content) {
+            return cfg;
+        }
+    }
+    Config { projects_base: "/home/sol013/KargoOke".into() }
+}
+
+#[tauri::command]
+fn set_config(projects_base: String, app: AppHandle) -> Result<(), String> {
+    let path = get_config_file(&app);
+    let cfg = Config { projects_base };
+    let json = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn scan_projects(state: State<'_, AppState>, app: AppHandle) -> Result<Vec<ProjectInfo>, String> {
+    let mut projects = Vec::new();
+    let cfg = get_config(state.clone(), app.clone());
+    
+    // For now we just mock this or run wsl ls if it's a wsl path?
+    // Wait, since we are on Windows, we can access WSL paths via \\wsl$\ or \\wsl.localhost\
+    // But the user said: "Untuk development kita tetep pake wsl aja".
+    // So the projects_base is typically a WSL path like `/home/sol013/KargoOke`.
+    // We can run `wsl -e bash -c "ls -1 /home/sol013/KargoOke"`
+    
+    let js_script = r#"
+const fs = require('fs');
+const path = require('path');
+const base = process.argv[2];
+if (!fs.existsSync(base)) process.exit(0);
+const dirs = fs.readdirSync(base).filter(d => fs.statSync(path.join(base, d)).isDirectory());
+let nextPort = 3001;
+const out = [];
+for (const dir of dirs) {
+  const p = path.join(base, dir, 'package.json');
+  if (fs.existsSync(p)) {
+    let pkg = {};
+    try { pkg = JSON.parse(fs.readFileSync(p)); } catch(e){}
+    let port = null;
+    const envs = ['.env.local', '.env', '.env.development'];
+    for (const e of envs) {
+      const ep = path.join(base, dir, e);
+      if (fs.existsSync(ep)) {
+        const m = fs.readFileSync(ep, 'utf8').match(/^PORT=(\d+)/m);
+        if (m) { port = parseInt(m[1]); break; }
+      }
+    }
+    const dev = pkg.scripts && pkg.scripts.dev ? pkg.scripts.dev : '';
+    if (!port) {
+      const cross = dev.match(/\bPORT=(\d+)/);
+      if (cross) port = parseInt(cross[1]);
+    }
+    if (!port) {
+      const flag = dev.match(/-p\s+(\d+)|--port[= ](\d+)/);
+      if (flag) port = parseInt(flag[1] || flag[2]);
+    }
+    if (!port) {
+      port = nextPort++;
+    }
+    
+    let framework = 'Node.js';
+    let version = '';
+    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    if (deps.next) { framework = 'Next.js'; version = deps.next; }
+    else if (deps['@nestjs/core']) { framework = 'NestJS'; version = deps['@nestjs/core']; }
+    else if (deps.express) { framework = 'Express'; version = deps.express; }
+    else if (deps.react) { framework = 'React'; version = deps.react; }
+    else if (deps.vue) { framework = 'Vue'; version = deps.vue; }
+    else if (deps.node) { version = deps.node; } // fallback
+    
+    // Clean up version string (remove ^ or ~)
+    if (version) version = version.replace(/^[~^]/, '');
+    
+    out.push(`${dir}|${pkg.name || dir}|${port}|${framework}|${version}`);
+  }
+}
+console.log(out.join('\n'));
+"#;
+
+    // Write the js_script to a temp file inside wsl to avoid quoting hell
+    use std::io::Write;
+    let temp_path = format!("{}/jshub_scan.js", std::env::temp_dir().to_string_lossy().replace("\\", "/"));
+    if let Ok(mut file) = fs::File::create(&temp_path) {
+        let _ = file.write_all(js_script.as_bytes());
+    }
+
+    let bash_cmd = format!(
+        "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; node \"$(wslpath '{}')\" \"{}\"",
+        temp_path, cfg.projects_base
+    );
+    
+    let mut cmd = Command::new("wsl");
+    cmd.arg("-e").arg("bash").arg("-c").arg(bash_cmd);
+    
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        
+    let output = cmd.output();
+        
+    if let Ok(out) = output {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let running = state.processes.lock().unwrap();
+        
+        for line in stdout.lines() {
+            if line.trim().is_empty() { continue; }
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() < 5 { continue; }
+            let dir_name = parts[0];
+            let name = parts[1];
+            let port = parts[2].parse::<u16>().unwrap_or(3001);
+            let framework = parts[3];
+            let framework_version = parts[4];
+            
+            projects.push(ProjectInfo {
+                name: dir_name.to_string(),
+                path: format!("{}/{}", cfg.projects_base, dir_name),
+                framework: format!("{} {}", framework, framework_version).trim().to_string(),
+                port,
+                is_running: running.contains_key(dir_name),
+            });
+        }
+    }
+    Ok(projects)
+}
+
+fn emit_log(app: &AppHandle, name: &str, line: &str, ltype: &str) {
+    let entry = LogEntry {
+        time: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        line: line.to_string(),
+        log_type: ltype.to_string(),
+    };
+    app.emit("project-log", LogPayload { project: name.to_string(), entry }).ok();
+}
+
+#[tauri::command]
+async fn start_project(name: String, path: String, port: u16, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    let mut procs = state.processes.lock().unwrap();
+    if procs.contains_key(&name) {
+        return Err("Already running".into());
+    }
+    
+    emit_log(&app, &name, &format!("🚀 Starting {} on port {} in WSL...", name, port), "system");
+    
+    let bash_cmd = format!(
+        "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; cd {} && PORT={} npm run dev",
+        path, port
+    );
+    
+    let mut cmd = Command::new("wsl");
+    cmd.arg("-e").arg("bash").arg("-c").arg(bash_cmd)
+       .stdout(Stdio::piped())
+       .stderr(Stdio::piped());
+       
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+       
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+        
+    let pid = child.id();
+    procs.insert(name.clone(), pid);
+    
+    app.emit("project-status", StatusPayload { project: name.clone(), status: ProjectStatus { running: true, pid: Some(pid), port: Some(port) } }).ok();
+    
+    // Spawn threads to read stdout/stderr
+    let app_clone = app.clone();
+    let name_clone = name.clone();
+    let stdout = child.stdout.take().unwrap();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                emit_log(&app_clone, &name_clone, &l, "stdout");
+            }
+        }
+    });
+    
+    let app_clone2 = app.clone();
+    let name_clone2 = name.clone();
+    let stderr = child.stderr.take().unwrap();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                emit_log(&app_clone2, &name_clone2, &l, "stderr");
+            }
+        }
+    });
+    
+    // Wait for exit
+    let app_clone3 = app.clone();
+    let name_clone3 = name.clone();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+        emit_log(&app_clone3, &name_clone3, "Process exited", "system");
+        app_clone3.emit("project-status", StatusPayload { project: name_clone3.clone(), status: ProjectStatus { running: false, pid: None, port: None } }).ok();
+    });
+    
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_project(name: String, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    let mut procs = state.processes.lock().unwrap();
+    if let Some(_pid) = procs.remove(&name) {
+        emit_log(&app, &name, "🛑 Stopping project...", "system");
+        
+        let mut cmd = Command::new("wsl");
+        cmd.arg("-e").arg("bash").arg("-c").arg(format!("pkill -f 'npm run dev'"));
+        
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
+            
+        let _ = cmd.output();
+            
+        app.emit("project-status", StatusPayload { project: name.clone(), status: ProjectStatus { running: false, pid: None, port: None } }).ok();
+        Ok(())
+    } else {
+        Err("Not running".into())
+    }
+}
+
+#[tauri::command]
+async fn build_project(name: String, path: String, app: AppHandle) -> Result<(), String> {
+    emit_log(&app, &name, "🔨 Starting build process...", "system");
+    
+    let bash_cmd = format!(
+        "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; cd {} && npm run build",
+        path
+    );
+    
+    let mut cmd = Command::new("wsl");
+    cmd.arg("-e").arg("bash").arg("-c").arg(bash_cmd)
+       .stdout(Stdio::piped())
+       .stderr(Stdio::piped());
+       
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+       
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+        
+    let app_clone = app.clone();
+    let name_clone = name.clone();
+    if let Some(stdout) = child.stdout.take() {
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    emit_log(&app_clone, &name_clone, &l, "stdout");
+                }
+            }
+        });
+    }
+    
+    let app_clone2 = app.clone();
+    let name_clone2 = name.clone();
+    if let Some(stderr) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    emit_log(&app_clone2, &name_clone2, &l, "stderr");
+                }
+            }
+        });
+    }
+    
+    let app_clone3 = app.clone();
+    let name_clone3 = name;
+    std::thread::spawn(move || {
+        let status = child.wait().unwrap();
+        if status.success() {
+            emit_log(&app_clone3, &name_clone3, "✅ Build completed successfully!", "system");
+        } else {
+            emit_log(&app_clone3, &name_clone3, "❌ Build failed.", "system");
+        }
+    });
+    
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_jshub(state: State<'_, AppState>) -> Result<(), String> {
+    // Kill all running
+    let mut procs = state.processes.lock().unwrap();
+    for (_name, pid) in procs.iter() {
+        let mut cmd = Command::new("taskkill");
+        cmd.args(&["/F", "/T", "/PID", &pid.to_string()]);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
+        let _ = cmd.output();
+    }
+    procs.clear();
+    // Force kill node in wsl
+    let mut wsl_cmd = Command::new("wsl");
+    wsl_cmd.arg("-e").arg("bash").arg("-c").arg("pkill -f node");
+    #[cfg(target_os = "windows")]
+    wsl_cmd.creation_flags(0x08000000);
+    let _ = wsl_cmd.output();
+    Ok(())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .manage(AppState::default())
+        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![
+            get_config,
+            set_config,
+            scan_projects,
+            start_project,
+            stop_project,
+            build_project,
+            stop_jshub
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
