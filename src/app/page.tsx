@@ -4,45 +4,65 @@ import { useRouter } from 'next/navigation';
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
-import { Power } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Power, RefreshCw, ArrowRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export default function Splash() {
   const router = useRouter();
   const [starting, setStarting] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
   const [appVersion, setAppVersion] = useState('');
+  const [updateError, setUpdateError] = useState('');
 
   useEffect(() => {
     getVersion().then(v => setAppVersion(v)).catch(() => setAppVersion('0.1.0'));
   }, []);
 
-  const startHub = async () => {
-    setStarting(true);
-    
+  const checkAndUpdate = async () => {
+    setUpdateError('');
+    setStatusMsg('Checking for updates...');
+
     try {
-      setStatusMsg('Checking for updates...');
       const update = await check();
       if (update) {
         setStatusMsg(`Downloading v${update.version}...`);
+        let totalDownloaded = 0;
         await update.downloadAndInstall((event) => {
           if (event.event === 'Progress') {
-            setStatusMsg(`Downloading... ${event.data.chunkLength} bytes`);
+            totalDownloaded += event.data.chunkLength;
+            const mb = (totalDownloaded / 1024 / 1024).toFixed(1);
+            setStatusMsg(`Downloading v${update.version}... ${mb} MB`);
           }
         });
         setStatusMsg('Restarting app...');
         await relaunch();
         return;
       }
-    } catch (e) {
-      console.log('Update check skipped or failed:', e);
+      // No update available, proceed to dashboard
+      goToDashboard();
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.error('Update check failed:', errMsg);
+      setUpdateError(errMsg);
     }
+  };
 
+  const goToDashboard = () => {
+    setUpdateError('');
     setStatusMsg('Starting services...');
-    // Simulate boot up
     setTimeout(() => {
       router.push('/dashboard');
     }, 1500);
+  };
+
+  const startHub = async () => {
+    setStarting(true);
+    await checkAndUpdate();
+  };
+
+  const retryUpdate = async () => {
+    setUpdateError('');
+    await checkAndUpdate();
   };
 
   return (
@@ -80,8 +100,8 @@ export default function Splash() {
           />
         </button>
 
-        <div className="h-8">
-          {starting && (
+        <div className="min-h-[80px] flex flex-col items-center gap-3">
+          {starting && !updateError && (
             <motion.p 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -90,6 +110,39 @@ export default function Splash() {
               {statusMsg}
             </motion.p>
           )}
+
+          <AnimatePresence>
+            {updateError && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="flex flex-col items-center gap-3 max-w-md"
+              >
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3 text-center">
+                  <p className="text-red-400 text-xs font-medium mb-1">Update failed</p>
+                  <p className="text-red-300/70 text-xs font-mono break-all">{updateError}</p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={retryUpdate}
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 rounded-lg text-emerald-400 text-sm font-medium transition-all duration-300"
+                  >
+                    <RefreshCw size={14} />
+                    Coba Lagi
+                  </button>
+                  <button
+                    onClick={goToDashboard}
+                    className="flex items-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded-lg text-neutral-300 text-sm font-medium transition-all duration-300"
+                  >
+                    Lanjut
+                    <ArrowRight size={14} />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </motion.div>
       
