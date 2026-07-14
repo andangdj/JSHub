@@ -9,9 +9,7 @@
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
-  "bundle": {
-    "createUpdaterArtifacts": true
-  },
+
   "app": {
     "windows": [
       {
@@ -27,6 +25,7 @@
     }
   },
   "bundle": {
+    "createUpdaterArtifacts": true,
     "active": true,
     "targets": "all",
     "icon": [
