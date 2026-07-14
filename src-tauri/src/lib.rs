@@ -40,6 +40,7 @@ struct ProjectInfo {
     framework: String,
     port: u16,
     is_running: bool,
+    scripts: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -139,7 +140,8 @@ for (const dir of dirs) {
     // Clean up version string (remove ^ or ~)
     if (version) version = version.replace(/^[~^]/, '');
     
-    out.push(`${dir}|${pkg.name || dir}|${port}|${framework}|${version}`);
+    const scripts = Object.keys(pkg.scripts || {}).join(',');
+    out.push(`${dir}|${pkg.name || dir}|${port}|${framework}|${version}|${scripts}`);
   }
 }
 console.log(out.join('\n'));
@@ -178,6 +180,11 @@ console.log(out.join('\n'));
             let port = parts[2].parse::<u16>().unwrap_or(3001);
             let framework = parts[3];
             let framework_version = parts[4];
+            let scripts = if parts.len() >= 6 {
+                parts[5].split(',').filter(|s| !s.is_empty()).map(String::from).collect()
+            } else {
+                Vec::new()
+            };
             
             projects.push(ProjectInfo {
                 name: dir_name.to_string(),
@@ -185,6 +192,7 @@ console.log(out.join('\n'));
                 framework: format!("{} {}", framework, framework_version).trim().to_string(),
                 port,
                 is_running: running.contains_key(dir_name),
+                scripts,
             });
         }
     }
@@ -201,17 +209,18 @@ fn emit_log(app: &AppHandle, name: &str, line: &str, ltype: &str) {
 }
 
 #[tauri::command]
-async fn start_project(name: String, path: String, port: u16, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+async fn start_project(name: String, path: String, port: u16, script: String, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
     let mut procs = state.processes.lock().unwrap();
     if procs.contains_key(&name) {
         return Err("Already running".into());
     }
     
-    emit_log(&app, &name, &format!("🚀 Starting {} on port {} in WSL...", name, port), "system");
+    let active_script = if script.is_empty() { "dev".to_string() } else { script };
+    emit_log(&app, &name, &format!("🚀 Starting {} on port {} (script: npm run {}) in WSL...", name, port, active_script), "system");
     
     let bash_cmd = format!(
-        "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; cd {} && PORT={} npm run dev",
-        path, port
+        "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; cd {} && PORT={} npm run {}",
+        path, port, active_script
     );
     
     let mut cmd = Command::new("wsl");

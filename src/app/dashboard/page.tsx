@@ -5,13 +5,20 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { open as openUrl } from '@tauri-apps/plugin-shell';
-import { PowerOff, Play, Square, ExternalLink, Terminal, FolderOpen, FolderSearch, Hammer } from 'lucide-react';
+import { PowerOff, Play, Square, ExternalLink, Terminal, FolderOpen, FolderSearch, Hammer, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-type ProjectInfo = { name: string, path: string, framework: string, port: number, is_running: boolean };
-type LogEntry = { time: string, line: string, type: string };
-type LogPayload = { project: string, entry: LogEntry };
-type StatusPayload = { project: string, status: { running: boolean, pid?: number, port?: number } };
+type ProjectInfo = { 
+  name: string; 
+  path: string; 
+  framework: string; 
+  port: number; 
+  is_running: boolean; 
+  scripts: string[];
+};
+type LogEntry = { time: string; line: string; type: string };
+type LogPayload = { project: string; entry: LogEntry };
+type StatusPayload = { project: string; status: { running: boolean; pid?: number; port?: number } };
 
 export default function Dashboard() {
   const router = useRouter();
@@ -19,6 +26,9 @@ export default function Dashboard() {
   const [activeProject, setActiveProject] = useState<string | null>(null);
   const [logs, setLogs] = useState<Record<string, LogEntry[]>>({});
   const [isFetching, setIsFetching] = useState(true);
+  const [currentFolder, setCurrentFolder] = useState<string>('');
+  const [scriptMenuOpen, setScriptMenuOpen] = useState<string | null>(null);
+  const [logFilter, setLogFilter] = useState('');
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const getFrameworkIcon = (frameworkStr: string) => {
@@ -29,6 +39,15 @@ export default function Dashboard() {
     if (fw.includes('express')) return <img src="/icons/express.svg" alt="Express" className="w-3 h-3 mr-1.5" />;
     if (fw.includes('nest')) return <img src="/icons/nestjs.svg" alt="NestJS" className="w-3 h-3 mr-1.5" />;
     return <img src="/icons/nodejs.svg" alt="Node.js" className="w-3 h-3 mr-1.5" />;
+  };
+
+  const fetchFolder = async () => {
+    try {
+      const cfg: { projects_base: string } = await invoke('get_config');
+      setCurrentFolder(cfg.projects_base);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const fetchProjects = async (showLoading = false) => {
@@ -44,6 +63,7 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    fetchFolder();
     fetchProjects(true);
     const interval = setInterval(() => fetchProjects(false), 3000);
 
@@ -84,17 +104,32 @@ export default function Dashboard() {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs, activeProject]);
 
-  const toggleProject = async (p: ProjectInfo) => {
+  const toggleProject = async (p: ProjectInfo, selectedScript?: string) => {
     try {
       if (p.is_running) {
         await invoke('stop_project', { name: p.name });
       } else {
-        await invoke('start_project', { name: p.name, path: p.path, port: p.port });
+        const runScript = selectedScript || p.scripts[0] || 'dev';
+        await invoke('start_project', { name: p.name, path: p.path, port: p.port, script: runScript });
         setActiveProject(p.name);
       }
       fetchProjects();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleStartClick = (e: React.MouseEvent, p: ProjectInfo) => {
+    e.stopPropagation();
+    if (p.is_running) {
+      toggleProject(p);
+      return;
+    }
+
+    if (p.scripts && p.scripts.length > 1) {
+      setScriptMenuOpen(scriptMenuOpen === p.name ? null : p.name);
+    } else {
+      toggleProject(p, p.scripts[0] || 'dev');
     }
   };
 
@@ -111,6 +146,7 @@ export default function Dashboard() {
           wslPath = wslMatch[1];
         }
         await invoke('set_config', { projectsBase: wslPath });
+        fetchFolder();
         fetchProjects(true);
       }
     } catch (e) {
@@ -134,7 +170,17 @@ export default function Dashboard() {
     }
   };
 
+  // Close script selector when clicking elsewhere
+  useEffect(() => {
+    const handleOutsideClick = () => setScriptMenuOpen(null);
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, []);
+
   const currentLogs = activeProject ? (logs[activeProject] || []) : [];
+  const filteredLogs = currentLogs.filter(log => 
+    log.line.toLowerCase().includes(logFilter.toLowerCase())
+  );
   const activeProjData = projects.find(p => p.name === activeProject);
 
   return (
@@ -162,6 +208,14 @@ export default function Dashboard() {
         </div>
         
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {/* Active Folder Path Pill */}
+          {currentFolder && (
+            <div className="mb-3 px-3 py-2 bg-emerald-500/5 border border-emerald-500/10 rounded-xl flex items-center gap-2 text-[11px] text-emerald-400/90 font-mono">
+              <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-500/70 animate-pulse"></span>
+              <span className="truncate" title={currentFolder}>{currentFolder}</span>
+            </div>
+          )}
+
           {isFetching ? (
             <div className="flex flex-col items-center justify-center py-10 text-neutral-500">
               <div className="w-8 h-8 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4"></div>
@@ -176,7 +230,7 @@ export default function Dashboard() {
             <div 
               key={p.name}
               onClick={() => setActiveProject(p.name)}
-              className={`p-3 rounded-xl cursor-pointer border transition-all duration-300 ${activeProject === p.name ? 'bg-neutral-800 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-700'}`}
+              className={`p-3 rounded-xl cursor-pointer border transition-all duration-300 relative ${activeProject === p.name ? 'bg-neutral-800 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-700'}`}
             >
               <div className="flex items-center justify-between mb-2">
                 <span className="font-semibold text-white truncate pr-2">{p.name}</span>
@@ -191,16 +245,45 @@ export default function Dashboard() {
                   </span>
                 </div>
                 
-                <button
-                  onClick={(e) => { e.stopPropagation(); toggleProject(p); }}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition-colors font-medium
-                    ${p.is_running 
-                      ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' 
-                      : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
-                >
-                  {p.is_running ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
-                  {p.is_running ? 'Stop' : 'Start'}
-                </button>
+                <div className="relative">
+                  <button
+                    onClick={(e) => handleStartClick(e, p)}
+                    className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition-colors font-medium
+                      ${p.is_running 
+                        ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' 
+                        : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
+                  >
+                    {p.is_running ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
+                    {p.is_running ? 'Stop' : 'Start'}
+                  </button>
+
+                  {/* Scripts dropdown menu */}
+                  {scriptMenuOpen === p.name && !p.is_running && (
+                    <div 
+                      onClick={(e) => e.stopPropagation()}
+                      className="absolute right-0 bottom-10 mt-1 w-44 bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden"
+                    >
+                      <div className="py-1.5 text-[10px] text-neutral-400 border-b border-neutral-700 px-2.5 font-bold uppercase tracking-wider">
+                        Select Script
+                      </div>
+                      <div className="max-h-36 overflow-y-auto">
+                        {p.scripts.map((script) => (
+                          <button
+                            key={script}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setScriptMenuOpen(null);
+                              toggleProject(p, script);
+                            }}
+                            className="w-full text-left px-3 py-2 text-white hover:bg-emerald-500/20 hover:text-emerald-400 transition-colors truncate text-xs font-mono"
+                          >
+                            npm run {script}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -218,6 +301,18 @@ export default function Dashboard() {
                 {activeProjData?.is_running && (
                   <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-emerald-500/20 text-emerald-400">Live</span>
                 )}
+              </div>
+
+              {/* Log filter search bar */}
+              <div className="flex-1 max-w-xs mx-6 relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                <input
+                  type="text"
+                  placeholder="Filter logs..."
+                  value={logFilter}
+                  onChange={(e) => setLogFilter(e.target.value)}
+                  className="w-full bg-neutral-900/60 hover:bg-neutral-900 focus:bg-neutral-900 border border-neutral-800 focus:border-neutral-700 rounded-lg pl-9 pr-4 py-1.5 text-xs text-white placeholder-neutral-500 outline-none transition-all duration-300"
+                />
               </div>
               
               <div className="flex items-center gap-2">
@@ -257,7 +352,7 @@ export default function Dashboard() {
               style={{ fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace" }}
             >
               <AnimatePresence>
-                {currentLogs.map((log, i) => (
+                {filteredLogs.map((log, i) => (
                   <motion.div 
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
