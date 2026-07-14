@@ -62,7 +62,7 @@ export default function Splash() {
           <h1 className="text-6xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
             JSHub
           </h1>
-          <p className="text-neutral-400 text-lg"></p>
+          <p className="text-emerald-400 font-medium tracking-widest uppercase text-sm mt-2">Next Gen Edition</p>
         </div>
 
         <button
