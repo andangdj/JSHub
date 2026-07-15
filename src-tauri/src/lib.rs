@@ -66,23 +66,101 @@ fn get_config_file(app: &AppHandle) -> String {
 #[tauri::command]
 fn get_config(_state: State<AppState>, app: AppHandle) -> Config {
     let path = get_config_file(&app);
-    if let Ok(content) = fs::read_to_string(&path) {
-        if let Ok(cfg) = serde_json::from_str(&content) {
-            return cfg;
+    let mut cfg = if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(c) = serde_json::from_str(&content) {
+            c
+        } else {
+            Config { 
+                projects_base: "/home/sol013/KargoOke".into(),
+                use_wsl: true,
+            }
+        }
+    } else {
+        Config { 
+            projects_base: "/home/sol013/KargoOke".into(),
+            use_wsl: true,
+        }
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        cfg.use_wsl = false;
+        if cfg.projects_base.contains("/home/sol013") {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+            cfg.projects_base = home;
         }
     }
-    Config { 
-        projects_base: "/home/sol013/KargoOke".into(),
-        use_wsl: true,
-    }
+    cfg
 }
 
 #[tauri::command]
-fn set_config(projects_base: String, use_wsl: bool, app: AppHandle) -> Result<(), String> {
+fn set_config(projects_base: String, mut use_wsl: bool, app: AppHandle) -> Result<(), String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        use_wsl = false;
+    }
     let path = get_config_file(&app);
     let cfg = Config { projects_base, use_wsl };
     let json = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn is_windows() -> bool {
+    cfg!(target_os = "windows")
+}
+
+fn find_node_path() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        "node".to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 1. Try standard command path
+        if Command::new("node").arg("-v").output().is_ok() {
+            return "node".to_string();
+        }
+        
+        // 2. Try interactive login shell to find node path on macOS/Linux
+        // Try zsh first (default on macOS)
+        let output = Command::new("zsh")
+            .arg("-l")
+            .arg("-c")
+            .arg("which node")
+            .output();
+        if let Ok(out) = output {
+            let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path_str.is_empty() && path_str.contains('/') {
+                return path_str;
+            }
+        }
+        
+        // Try bash
+        let output = Command::new("bash")
+            .arg("-l")
+            .arg("-c")
+            .arg("which node")
+            .output();
+        if let Ok(out) = output {
+            let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path_str.is_empty() && path_str.contains('/') {
+                return path_str;
+            }
+        }
+
+        // Try standard Homebrew path
+        if std::path::Path::new("/opt/homebrew/bin/node").exists() {
+            return "/opt/homebrew/bin/node".to_string();
+        }
+        
+        // Try standard Intel path
+        if std::path::Path::new("/usr/local/bin/node").exists() {
+            return "/usr/local/bin/node".to_string();
+        }
+        
+        "node".to_string()
+    }
 }
 
 #[tauri::command]
@@ -181,11 +259,23 @@ console.log(out.join('\n'));
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         cmd.output()
     } else {
-        let mut cmd = Command::new("node");
-        cmd.arg(&temp_path).arg(&cfg.projects_base);
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        cmd.output()
+        if cfg!(target_os = "windows") {
+            let mut cmd = Command::new("node");
+            cmd.arg(&temp_path).arg(&cfg.projects_base);
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            cmd.output()
+        } else {
+            let node_path = find_node_path();
+            let shell = if std::path::Path::new("/bin/zsh").exists() || std::path::Path::new("/usr/bin/zsh").exists() {
+                "zsh"
+            } else {
+                "bash"
+            };
+            let mut cmd = Command::new(shell);
+            cmd.arg("-l").arg("-c").arg(format!("\"{}\" \"{}\" \"{}\"", node_path, temp_path, cfg.projects_base));
+            cmd.output()
+        }
     };
         
     if let Ok(out) = output {
@@ -270,8 +360,13 @@ async fn start_project(name: String, path: String, port: u16, script: String, st
             c.env("PORT", port.to_string());
             c
         } else {
-            let mut c = Command::new("sh");
-            c.arg("-c").arg(format!("npm run {}", active_script));
+            let shell = if std::path::Path::new("/bin/zsh").exists() || std::path::Path::new("/usr/bin/zsh").exists() {
+                "zsh"
+            } else {
+                "bash"
+            };
+            let mut c = Command::new(shell);
+            c.arg("-l").arg("-c").arg(format!("npm run {}", active_script));
             c.current_dir(&path);
             c.env("PORT", port.to_string());
             c
@@ -383,8 +478,13 @@ async fn build_project(name: String, path: String, state: State<'_, AppState>, a
             c.current_dir(path.replace("/", "\\"));
             c
         } else {
-            let mut c = Command::new("sh");
-            c.arg("-c").arg("npm run build");
+            let shell = if std::path::Path::new("/bin/zsh").exists() || std::path::Path::new("/usr/bin/zsh").exists() {
+                "zsh"
+            } else {
+                "bash"
+            };
+            let mut c = Command::new(shell);
+            c.arg("-l").arg("-c").arg("npm run build");
             c.current_dir(&path);
             c
         }
@@ -497,7 +597,8 @@ pub fn run() {
             start_project,
             stop_project,
             build_project,
-            stop_jshub
+            stop_jshub,
+            is_windows
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

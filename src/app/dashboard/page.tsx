@@ -28,6 +28,7 @@ export default function Dashboard() {
   const [isFetching, setIsFetching] = useState(true);
   const [currentFolder, setCurrentFolder] = useState<string>('');
   const [useWsl, setUseWsl] = useState(true);
+  const [isWindows, setIsWindows] = useState(true);
   const [scriptMenuOpen, setScriptMenuOpen] = useState<string | null>(null);
   const [logFilter, setLogFilter] = useState('');
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -65,6 +66,7 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    invoke('is_windows').then(res => setIsWindows(res as boolean)).catch(() => setIsWindows(true));
     fetchFolder();
     fetchProjects(true);
     const interval = setInterval(() => fetchProjects(false), 3000);
@@ -221,17 +223,19 @@ export default function Dashboard() {
         <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
           <h2 className="text-xl font-bold text-emerald-400">JSHub</h2>
           <div className="flex gap-2 items-center">
-            <button
-              onClick={() => handleWslToggle(!useWsl)}
-              className={`px-2 py-1 text-[10px] rounded border font-semibold tracking-wider transition-all duration-300 ${
-                useWsl 
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' 
-                  : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700 hover:text-white'
-              }`}
-              title={useWsl ? "Using WSL environment" : "Using native Windows environment"}
-            >
-              WSL: {useWsl ? "ON" : "OFF"}
-            </button>
+            {isWindows && (
+              <button
+                onClick={() => handleWslToggle(!useWsl)}
+                className={`px-2 py-1 text-[10px] rounded border font-semibold tracking-wider transition-all duration-300 ${
+                  useWsl 
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' 
+                    : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700 hover:text-white'
+                }`}
+                title={useWsl ? "Using WSL environment" : "Using native Windows environment"}
+              >
+                WSL: {useWsl ? "ON" : "OFF"}
+              </button>
+            )}
             <button 
               onClick={changeFolder}
               title="Change Projects Folder"
