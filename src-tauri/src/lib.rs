@@ -16,6 +16,7 @@ struct AppState {
 #[derive(Serialize, Deserialize)]
 struct Config {
     projects_base: String,
+    use_wsl: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -70,13 +71,16 @@ fn get_config(_state: State<AppState>, app: AppHandle) -> Config {
             return cfg;
         }
     }
-    Config { projects_base: "/home/sol013/KargoOke".into() }
+    Config { 
+        projects_base: "/home/sol013/KargoOke".into(),
+        use_wsl: true,
+    }
 }
 
 #[tauri::command]
-fn set_config(projects_base: String, app: AppHandle) -> Result<(), String> {
+fn set_config(projects_base: String, use_wsl: bool, app: AppHandle) -> Result<(), String> {
     let path = get_config_file(&app);
-    let cfg = Config { projects_base };
+    let cfg = Config { projects_base, use_wsl };
     let json = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())
 }
@@ -97,52 +101,64 @@ const fs = require('fs');
 const path = require('path');
 const base = process.argv[2];
 if (!fs.existsSync(base)) process.exit(0);
-const dirs = fs.readdirSync(base).filter(d => fs.statSync(path.join(base, d)).isDirectory());
+let dirs = [];
+try {
+  dirs = fs.readdirSync(base).filter(d => {
+    try {
+      return fs.statSync(path.join(base, d)).isDirectory();
+    } catch(e) {
+      return false;
+    }
+  });
+} catch(e) {
+  process.exit(0);
+}
 let nextPort = 3001;
 const out = [];
 for (const dir of dirs) {
-  const p = path.join(base, dir, 'package.json');
-  if (fs.existsSync(p)) {
-    let pkg = {};
-    try { pkg = JSON.parse(fs.readFileSync(p)); } catch(e){}
-    let port = null;
-    const envs = ['.env.local', '.env', '.env.development'];
-    for (const e of envs) {
-      const ep = path.join(base, dir, e);
-      if (fs.existsSync(ep)) {
-        const m = fs.readFileSync(ep, 'utf8').match(/^PORT=(\d+)/m);
-        if (m) { port = parseInt(m[1]); break; }
+  try {
+    const p = path.join(base, dir, 'package.json');
+    if (fs.existsSync(p)) {
+      let pkg = {};
+      try { pkg = JSON.parse(fs.readFileSync(p)); } catch(e){}
+      let port = null;
+      const envs = ['.env.local', '.env', '.env.development'];
+      for (const e of envs) {
+        const ep = path.join(base, dir, e);
+        if (fs.existsSync(ep)) {
+          const m = fs.readFileSync(ep, 'utf8').match(/^PORT=(\d+)/m);
+          if (m) { port = parseInt(m[1]); break; }
+        }
       }
+      const dev = pkg.scripts && pkg.scripts.dev ? pkg.scripts.dev : '';
+      if (!port) {
+        const cross = dev.match(/\bPORT=(\d+)/);
+        if (cross) port = parseInt(cross[1]);
+      }
+      if (!port) {
+        const flag = dev.match(/-p\s+(\d+)|--port[= ](\d+)/);
+        if (flag) port = parseInt(flag[1] || flag[2]);
+      }
+      if (!port) {
+        port = nextPort++;
+      }
+      
+      let framework = 'Node.js';
+      let version = '';
+      const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+      if (deps.next) { framework = 'Next.js'; version = deps.next; }
+      else if (deps['@nestjs/core']) { framework = 'NestJS'; version = deps['@nestjs/core']; }
+      else if (deps.express) { framework = 'Express'; version = deps.express; }
+      else if (deps.react) { framework = 'React'; version = deps.react; }
+      else if (deps.vue) { framework = 'Vue'; version = deps.vue; }
+      else if (deps.node) { version = deps.node; } // fallback
+      
+      if (version) version = version.replace(/^[~^]/, '');
+      
+      const scripts = Object.keys(pkg.scripts || {}).join(',');
+      out.push(`${dir}|${pkg.name || dir}|${port}|${framework}|${version}|${scripts}`);
     }
-    const dev = pkg.scripts && pkg.scripts.dev ? pkg.scripts.dev : '';
-    if (!port) {
-      const cross = dev.match(/\bPORT=(\d+)/);
-      if (cross) port = parseInt(cross[1]);
-    }
-    if (!port) {
-      const flag = dev.match(/-p\s+(\d+)|--port[= ](\d+)/);
-      if (flag) port = parseInt(flag[1] || flag[2]);
-    }
-    if (!port) {
-      port = nextPort++;
-    }
-    
-    let framework = 'Node.js';
-    let version = '';
-    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-    if (deps.next) { framework = 'Next.js'; version = deps.next; }
-    else if (deps['@nestjs/core']) { framework = 'NestJS'; version = deps['@nestjs/core']; }
-    else if (deps.express) { framework = 'Express'; version = deps.express; }
-    else if (deps.react) { framework = 'React'; version = deps.react; }
-    else if (deps.vue) { framework = 'Vue'; version = deps.vue; }
-    else if (deps.node) { version = deps.node; } // fallback
-    
-    // Clean up version string (remove ^ or ~)
-    if (version) version = version.replace(/^[~^]/, '');
-    
-    const scripts = Object.keys(pkg.scripts || {}).join(',');
-    out.push(`${dir}|${pkg.name || dir}|${port}|${framework}|${version}|${scripts}`);
-  }
+  } catch(e){}
 }
 console.log(out.join('\n'));
 "#;
@@ -154,21 +170,32 @@ console.log(out.join('\n'));
         let _ = file.write_all(js_script.as_bytes());
     }
 
-    let bash_cmd = format!(
-        "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; node \"$(wslpath '{}')\" \"{}\"",
-        temp_path, cfg.projects_base
-    );
-    
-    let mut cmd = Command::new("wsl");
-    cmd.arg("-e").arg("bash").arg("-c").arg(bash_cmd);
-    
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        
-    let output = cmd.output();
+    let output = if cfg.use_wsl {
+        let bash_cmd = format!(
+            "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; node \"$(wslpath '{}')\" \"{}\"",
+            temp_path, cfg.projects_base
+        );
+        let mut cmd = Command::new("wsl");
+        cmd.arg("-e").arg("bash").arg("-c").arg(bash_cmd);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.output()
+    } else {
+        let mut cmd = Command::new("node");
+        cmd.arg(&temp_path).arg(&cfg.projects_base);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.output()
+    };
         
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        println!("JSHub Scanner CMD run: use_wsl={}, temp_path={}, projects_base={}", cfg.use_wsl, temp_path, cfg.projects_base);
+        println!("JSHub Scanner stdout: {}", stdout);
+        if !stderr.is_empty() {
+            println!("JSHub Scanner stderr: {}", stderr);
+        }
         let running = state.processes.lock().unwrap();
         
         for line in stdout.lines() {
@@ -186,9 +213,16 @@ console.log(out.join('\n'));
                 Vec::new()
             };
             
+            let proj_path = if cfg.use_wsl {
+                format!("{}/{}", cfg.projects_base, dir_name)
+            } else {
+                let base = cfg.projects_base.trim_end_matches('\\');
+                format!("{}\\{}", base, dir_name)
+            };
+
             projects.push(ProjectInfo {
                 name: dir_name.to_string(),
-                path: format!("{}/{}", cfg.projects_base, dir_name),
+                path: proj_path,
                 framework: format!("{} {}", framework, framework_version).trim().to_string(),
                 port,
                 is_running: running.contains_key(dir_name),
@@ -215,17 +249,36 @@ async fn start_project(name: String, path: String, port: u16, script: String, st
         return Err("Already running".into());
     }
     
+    let cfg = get_config(state.clone(), app.clone());
     let active_script = if script.is_empty() { "dev".to_string() } else { script };
-    emit_log(&app, &name, &format!("🚀 Starting {} on port {} (script: npm run {}) in WSL...", name, port, active_script), "system");
+
+    let mut cmd = if cfg.use_wsl {
+        emit_log(&app, &name, &format!("🚀 Starting {} on port {} (script: npm run {}) in WSL...", name, port, active_script), "system");
+        let bash_cmd = format!(
+            "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; cd {} && PORT={} npm run {}",
+            path, port, active_script
+        );
+        let mut c = Command::new("wsl");
+        c.arg("-e").arg("bash").arg("-c").arg(bash_cmd);
+        c
+    } else {
+        emit_log(&app, &name, &format!("🚀 Starting {} on port {} (script: npm run {}) natively...", name, port, active_script), "system");
+        if cfg!(target_os = "windows") {
+            let mut c = Command::new("cmd");
+            c.arg("/c").arg(format!("npm run {}", active_script));
+            c.current_dir(path.replace("/", "\\"));
+            c.env("PORT", port.to_string());
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(format!("npm run {}", active_script));
+            c.current_dir(&path);
+            c.env("PORT", port.to_string());
+            c
+        }
+    };
     
-    let bash_cmd = format!(
-        "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; cd {} && PORT={} npm run {}",
-        path, port, active_script
-    );
-    
-    let mut cmd = Command::new("wsl");
-    cmd.arg("-e").arg("bash").arg("-c").arg(bash_cmd)
-       .stdout(Stdio::piped())
+    cmd.stdout(Stdio::piped())
        .stderr(Stdio::piped());
        
     #[cfg(target_os = "windows")]
@@ -278,11 +331,25 @@ async fn start_project(name: String, path: String, port: u16, script: String, st
 #[tauri::command]
 async fn stop_project(name: String, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
     let mut procs = state.processes.lock().unwrap();
-    if let Some(_pid) = procs.remove(&name) {
+    if let Some(pid) = procs.remove(&name) {
         emit_log(&app, &name, "🛑 Stopping project...", "system");
         
-        let mut cmd = Command::new("wsl");
-        cmd.arg("-e").arg("bash").arg("-c").arg(format!("pkill -f 'npm run dev'"));
+        let cfg = get_config(state.clone(), app.clone());
+        let mut cmd = if cfg.use_wsl {
+            let mut c = Command::new("wsl");
+            c.arg("-e").arg("bash").arg("-c").arg(format!("pkill -f 'npm run'"));
+            c
+        } else {
+            if cfg!(target_os = "windows") {
+                let mut c = Command::new("taskkill");
+                c.args(&["/F", "/T", "/PID", &pid.to_string()]);
+                c
+            } else {
+                let mut c = Command::new("sh");
+                c.arg("-c").arg(format!("pkill -P {0} ; kill -9 {0}", pid));
+                c
+            }
+        };
         
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x08000000);
@@ -297,17 +364,33 @@ async fn stop_project(name: String, state: State<'_, AppState>, app: AppHandle) 
 }
 
 #[tauri::command]
-async fn build_project(name: String, path: String, app: AppHandle) -> Result<(), String> {
+async fn build_project(name: String, path: String, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
     emit_log(&app, &name, "🔨 Starting build process...", "system");
     
-    let bash_cmd = format!(
-        "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; cd {} && npm run build",
-        path
-    );
+    let cfg = get_config(state.clone(), app.clone());
+    let mut cmd = if cfg.use_wsl {
+        let bash_cmd = format!(
+            "export NVM_DIR=\"$HOME/.nvm\"; [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; cd {} && npm run build",
+            path
+        );
+        let mut c = Command::new("wsl");
+        c.arg("-e").arg("bash").arg("-c").arg(bash_cmd);
+        c
+    } else {
+        if cfg!(target_os = "windows") {
+            let mut c = Command::new("cmd");
+            c.arg("/c").arg("npm run build");
+            c.current_dir(path.replace("/", "\\"));
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg("npm run build");
+            c.current_dir(&path);
+            c
+        }
+    };
     
-    let mut cmd = Command::new("wsl");
-    cmd.arg("-e").arg("bash").arg("-c").arg(bash_cmd)
-       .stdout(Stdio::piped())
+    cmd.stdout(Stdio::piped())
        .stderr(Stdio::piped());
        
     #[cfg(target_os = "windows")]
@@ -357,22 +440,44 @@ async fn build_project(name: String, path: String, app: AppHandle) -> Result<(),
 
 #[tauri::command]
 async fn stop_jshub(state: State<'_, AppState>) -> Result<(), String> {
-    // Kill all running
+    // Kill all running local processes
     let mut procs = state.processes.lock().unwrap();
     for (_name, pid) in procs.iter() {
-        let mut cmd = Command::new("taskkill");
-        cmd.args(&["/F", "/T", "/PID", &pid.to_string()]);
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(0x08000000);
-        let _ = cmd.output();
+        if cfg!(target_os = "windows") {
+            let mut cmd = Command::new("taskkill");
+            cmd.args(&["/F", "/T", "/PID", &pid.to_string()]);
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000);
+            let _ = cmd.output();
+        } else {
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c").arg(format!("pkill -P {0} ; kill -9 {0}", pid));
+            let _ = cmd.output();
+        }
     }
     procs.clear();
-    // Force kill node in wsl
-    let mut wsl_cmd = Command::new("wsl");
-    wsl_cmd.arg("-e").arg("bash").arg("-c").arg("pkill -f node");
-    #[cfg(target_os = "windows")]
-    wsl_cmd.creation_flags(0x08000000);
-    let _ = wsl_cmd.output();
+    
+    // Force kill node natively
+    if cfg!(target_os = "windows") {
+        let mut win_cmd = Command::new("taskkill");
+        win_cmd.args(&["/F", "/IM", "node.exe"]);
+        #[cfg(target_os = "windows")]
+        win_cmd.creation_flags(0x08000000);
+        let _ = win_cmd.output();
+    } else {
+        let mut unix_cmd = Command::new("pkill");
+        unix_cmd.arg("-f").arg("node");
+        let _ = unix_cmd.output();
+    }
+    
+    // Force kill node in wsl (only if Windows)
+    if cfg!(target_os = "windows") {
+        let mut wsl_cmd = Command::new("wsl");
+        wsl_cmd.arg("-e").arg("bash").arg("-c").arg("pkill -f node");
+        #[cfg(target_os = "windows")]
+        wsl_cmd.creation_flags(0x08000000);
+        let _ = wsl_cmd.output();
+    }
     Ok(())
 }
 

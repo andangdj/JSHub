@@ -13,6 +13,8 @@ export default function Splash() {
   const [statusMsg, setStatusMsg] = useState('');
   const [appVersion, setAppVersion] = useState('');
   const [updateError, setUpdateError] = useState('');
+  const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+  const [pendingUpdate, setPendingUpdate] = useState<any>(null);
 
   useEffect(() => {
     getVersion().then(v => setAppVersion(v)).catch(() => setAppVersion('0.1.0'));
@@ -25,17 +27,9 @@ export default function Splash() {
     try {
       const update = await check();
       if (update) {
-        setStatusMsg(`Downloading v${update.version}...`);
-        let totalDownloaded = 0;
-        await update.downloadAndInstall((event) => {
-          if (event.event === 'Progress') {
-            totalDownloaded += event.data.chunkLength;
-            const mb = (totalDownloaded / 1024 / 1024).toFixed(1);
-            setStatusMsg(`Downloading v${update.version}... ${mb} MB`);
-          }
-        });
-        setStatusMsg('Restarting app...');
-        await relaunch();
+        setPendingUpdate(update);
+        setShowUpdateDialog(true);
+        setStatusMsg('Update available');
         return;
       }
       // No update available, proceed to dashboard
@@ -47,7 +41,30 @@ export default function Splash() {
     }
   };
 
+  const runUpdate = async () => {
+    if (!pendingUpdate) return;
+    setShowUpdateDialog(false);
+    setStatusMsg(`Downloading v${pendingUpdate.version}...`);
+    try {
+      let totalDownloaded = 0;
+      await pendingUpdate.downloadAndInstall((event) => {
+        if (event.event === 'Progress') {
+          totalDownloaded += event.data.chunkLength;
+          const mb = (totalDownloaded / 1024 / 1024).toFixed(1);
+          setStatusMsg(`Downloading v${pendingUpdate.version}... ${mb} MB`);
+        }
+      });
+      setStatusMsg('Restarting app...');
+      await relaunch();
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.error('Update failed:', errMsg);
+      setUpdateError(errMsg);
+    }
+  };
+
   const goToDashboard = () => {
+    setShowUpdateDialog(false);
     setUpdateError('');
     setStatusMsg('Starting services...');
     setTimeout(() => {
@@ -144,6 +161,58 @@ export default function Splash() {
           </AnimatePresence>
         </div>
       </motion.div>
+
+      <AnimatePresence>
+        {showUpdateDialog && pendingUpdate && (
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-2xl space-y-6"
+            >
+              <div className="text-center space-y-2">
+                <h3 className="text-xl font-bold text-white">Pembaruan Tersedia!</h3>
+                <p className="text-neutral-400 text-sm">Versi baru JSHub siap untuk diunduh.</p>
+              </div>
+
+              <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex justify-around items-center text-sm font-mono">
+                <div className="text-center">
+                  <div className="text-neutral-500 text-[10px] uppercase font-bold tracking-wider mb-1">Terinstall</div>
+                  <div className="text-neutral-300 font-semibold">v{appVersion}</div>
+                </div>
+                <div className="text-neutral-600">→</div>
+                <div className="text-center">
+                  <div className="text-emerald-500 text-[10px] uppercase font-bold tracking-wider mb-1">Versi Baru</div>
+                  <div className="text-emerald-400 font-bold">v{pendingUpdate.version}</div>
+                </div>
+              </div>
+
+              {pendingUpdate.notes && (
+                <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-3 max-h-24 overflow-y-auto text-xs text-neutral-400 leading-relaxed font-sans">
+                  <div className="font-semibold text-neutral-300 mb-1">Catatan Rilis:</div>
+                  {pendingUpdate.notes}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={runUpdate}
+                  className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white text-sm font-medium rounded-xl transition-colors shadow-lg shadow-emerald-500/10"
+                >
+                  Perbarui Sekarang
+                </button>
+                <button
+                  onClick={goToDashboard}
+                  className="flex-1 py-2.5 bg-neutral-800 hover:bg-neutral-700 active:bg-neutral-600 text-neutral-300 text-sm font-medium rounded-xl border border-neutral-700 transition-colors"
+                >
+                  Lanjut ke Dashboard
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       
       {appVersion && (
         <div className="absolute bottom-4 right-6 text-neutral-600 text-xs font-medium font-mono">

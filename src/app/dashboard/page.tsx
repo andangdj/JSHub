@@ -27,6 +27,7 @@ export default function Dashboard() {
   const [logs, setLogs] = useState<Record<string, LogEntry[]>>({});
   const [isFetching, setIsFetching] = useState(true);
   const [currentFolder, setCurrentFolder] = useState<string>('');
+  const [useWsl, setUseWsl] = useState(true);
   const [scriptMenuOpen, setScriptMenuOpen] = useState<string | null>(null);
   const [logFilter, setLogFilter] = useState('');
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -43,8 +44,9 @@ export default function Dashboard() {
 
   const fetchFolder = async () => {
     try {
-      const cfg: { projects_base: string } = await invoke('get_config');
+      const cfg: { projects_base: string; use_wsl: boolean } = await invoke('get_config');
       setCurrentFolder(cfg.projects_base);
+      setUseWsl(cfg.use_wsl);
     } catch (e) {
       console.error(e);
     }
@@ -137,18 +139,47 @@ export default function Dashboard() {
     try {
       const selected = await openDialog({ directory: true, multiple: false });
       if (selected && typeof selected === 'string') {
-        let wslPath = selected.replace(/\\/g, '/');
-        if (wslPath.match(/^[a-zA-Z]:/)) {
-          wslPath = `/mnt/${wslPath.charAt(0).toLowerCase()}${wslPath.slice(2)}`;
+        let finalPath = selected;
+        if (useWsl) {
+          let wslPath = selected.replace(/\\/g, '/');
+          if (wslPath.match(/^[a-zA-Z]:/)) {
+            wslPath = `/mnt/${wslPath.charAt(0).toLowerCase()}${wslPath.slice(2)}`;
+          }
+          const wslMatch = wslPath.match(/^\/\/(?:wsl\.localhost|wsl\$)\/[^\/]+(\/.*)$/i);
+          if (wslMatch) {
+            wslPath = wslMatch[1];
+          }
+          finalPath = wslPath;
         }
-        const wslMatch = wslPath.match(/^\/\/(?:wsl\.localhost|wsl\$)\/[^\/]+(\/.*)$/i);
-        if (wslMatch) {
-          wslPath = wslMatch[1];
-        }
-        await invoke('set_config', { projectsBase: wslPath });
+        await invoke('set_config', { projectsBase: finalPath, useWsl });
         fetchFolder();
         fetchProjects(true);
       }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleWslToggle = async (checked: boolean) => {
+    try {
+      let convertedPath = currentFolder;
+
+      if (!checked && currentFolder.startsWith('/mnt/')) {
+        // WSL ON -> OFF: convert /mnt/d/foo -> D:\foo
+        const driveLetter = currentFolder[5].toUpperCase();
+        const rest = currentFolder.slice(7).replace(/\//g, '\\');
+        convertedPath = `${driveLetter}:\\${rest}`;
+      } else if (checked && currentFolder.match(/^[a-zA-Z]:\\/)) {
+        // WSL OFF -> ON: convert D:\foo -> /mnt/d/foo
+        const driveLetter = currentFolder[0].toLowerCase();
+        const rest = currentFolder.slice(3).replace(/\\/g, '/');
+        convertedPath = `/mnt/${driveLetter}/${rest}`;
+      }
+
+      await invoke('set_config', { projectsBase: convertedPath, useWsl: checked });
+      setCurrentFolder(convertedPath);
+      setUseWsl(checked);
+      fetchProjects(true);
     } catch (e) {
       console.error(e);
     }
@@ -189,7 +220,18 @@ export default function Dashboard() {
       <div className="w-80 bg-neutral-900 border-r border-neutral-800 flex flex-col">
         <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
           <h2 className="text-xl font-bold text-emerald-400">JSHub</h2>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            <button
+              onClick={() => handleWslToggle(!useWsl)}
+              className={`px-2 py-1 text-[10px] rounded border font-semibold tracking-wider transition-all duration-300 ${
+                useWsl 
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' 
+                  : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700 hover:text-white'
+              }`}
+              title={useWsl ? "Using WSL environment" : "Using native Windows environment"}
+            >
+              WSL: {useWsl ? "ON" : "OFF"}
+            </button>
             <button 
               onClick={changeFolder}
               title="Change Projects Folder"
@@ -261,7 +303,7 @@ export default function Dashboard() {
                   {scriptMenuOpen === p.name && !p.is_running && (
                     <div 
                       onClick={(e) => e.stopPropagation()}
-                      className="absolute right-0 bottom-10 mt-1 w-44 bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden"
+                      className="absolute right-0 top-full mt-1 w-44 bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden"
                     >
                       <div className="py-1.5 text-[10px] text-neutral-400 border-b border-neutral-700 px-2.5 font-bold uppercase tracking-wider">
                         Select Script
@@ -348,7 +390,7 @@ export default function Dashboard() {
             </div>
             
             <div 
-              className="flex-1 overflow-y-auto p-6 text-xs leading-relaxed" 
+              className="flex-1 overflow-y-auto p-4 text-xs leading-tight" 
               style={{ fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New', monospace" }}
             >
               <AnimatePresence>
@@ -357,7 +399,7 @@ export default function Dashboard() {
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
                     key={i} 
-                    className="flex gap-4 mb-1 hover:bg-white/[0.02] px-2 py-1 -mx-2 rounded"
+                    className="flex gap-3 hover:bg-white/[0.02] px-2 py-0.5 -mx-2 rounded"
                   >
                     <span className="text-neutral-600 shrink-0">{log.time.split('T')[1].substring(0,8)}</span>
                     <span className={`
