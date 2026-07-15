@@ -117,9 +117,11 @@ fn find_node_path() -> String {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        // 1. Try standard command path
-        if Command::new("node").arg("-v").output().is_ok() {
-            return "node".to_string();
+        // 1. Try standard command path (must check exit code, not just is_ok)
+        if let Ok(out) = Command::new("node").arg("-v").output() {
+            if out.status.success() {
+                return "node".to_string();
+            }
         }
         
         // 2. Try zsh first (default on macOS) by explicitly sourcing zshrc
@@ -264,18 +266,17 @@ console.log(out.join('\n'));
             cmd.output()
         } else {
             let node_path = find_node_path();
-            let shell = if std::path::Path::new("/bin/zsh").exists() || std::path::Path::new("/usr/bin/zsh").exists() {
-                "zsh"
-            } else {
-                "bash"
-            };
-            let mut cmd = Command::new(shell);
-            let cmd_str = format!(
-                "source ~/.{0}profile 2>/dev/null; source ~/.{0}rc 2>/dev/null; \"{1}\" \"{2}\" \"{3}\"",
-                if shell == "zsh" { "z" } else { "bash_" },
-                node_path, temp_path, cfg.projects_base
-            );
-            cmd.arg("-c").arg(cmd_str);
+            let mut cmd = Command::new(&node_path);
+            cmd.arg(&temp_path).arg(&cfg.projects_base);
+            
+            // Inject node bin dir into PATH so node can be found by child processes
+            if node_path != "node" {
+                if let Some(parent) = std::path::Path::new(&node_path).parent() {
+                    let node_bin_dir = parent.to_string_lossy().to_string();
+                    let current_path = std::env::var("PATH").unwrap_or_default();
+                    cmd.env("PATH", format!("{}:{}", node_bin_dir, current_path));
+                }
+            }
             cmd.output()
         }
     };
@@ -307,9 +308,12 @@ console.log(out.join('\n'));
             
             let proj_path = if cfg.use_wsl {
                 format!("{}/{}", cfg.projects_base, dir_name)
-            } else {
+            } else if cfg!(target_os = "windows") {
                 let base = cfg.projects_base.trim_end_matches('\\');
                 format!("{}\\{}", base, dir_name)
+            } else {
+                let base = cfg.projects_base.trim_end_matches('/');
+                format!("{}/{}", base, dir_name)
             };
 
             projects.push(ProjectInfo {
@@ -362,20 +366,30 @@ async fn start_project(name: String, path: String, port: u16, script: String, st
             c.env("PORT", port.to_string());
             c
         } else {
-            let shell = if std::path::Path::new("/bin/zsh").exists() || std::path::Path::new("/usr/bin/zsh").exists() {
-                "zsh"
+            let node_path = find_node_path();
+            let npm_path = if node_path == "node" {
+                "npm".to_string()
             } else {
-                "bash"
+                let p = std::path::Path::new(&node_path);
+                if let Some(parent) = p.parent() {
+                    parent.join("npm").to_string_lossy().to_string()
+                } else {
+                    "npm".to_string()
+                }
             };
-            let mut c = Command::new(shell);
-            let cmd_str = format!(
-                "source ~/.{0}profile 2>/dev/null; source ~/.{0}rc 2>/dev/null; npm run {1}",
-                if shell == "zsh" { "z" } else { "bash_" },
-                active_script
-            );
-            c.arg("-c").arg(cmd_str);
+            let mut c = Command::new(&npm_path);
+            c.arg("run").arg(&active_script);
             c.current_dir(&path);
             c.env("PORT", port.to_string());
+            
+            if node_path != "node" {
+                if let Some(parent) = std::path::Path::new(&node_path).parent() {
+                    let node_bin_dir = parent.to_string_lossy().to_string();
+                    let current_path = std::env::var("PATH").unwrap_or_default();
+                    let new_path = format!("{}:{}", node_bin_dir, current_path);
+                    c.env("PATH", new_path);
+                }
+            }
             c
         }
     };
@@ -486,18 +500,29 @@ async fn build_project(name: String, path: String, state: State<'_, AppState>, a
             c.current_dir(path.replace("/", "\\"));
             c
         } else {
-            let shell = if std::path::Path::new("/bin/zsh").exists() || std::path::Path::new("/usr/bin/zsh").exists() {
-                "zsh"
+            let node_path = find_node_path();
+            let npm_path = if node_path == "node" {
+                "npm".to_string()
             } else {
-                "bash"
+                let p = std::path::Path::new(&node_path);
+                if let Some(parent) = p.parent() {
+                    parent.join("npm").to_string_lossy().to_string()
+                } else {
+                    "npm".to_string()
+                }
             };
-            let mut c = Command::new(shell);
-            let cmd_str = format!(
-                "source ~/.{0}profile 2>/dev/null; source ~/.{0}rc 2>/dev/null; npm run build",
-                if shell == "zsh" { "z" } else { "bash_" }
-            );
-            c.arg("-c").arg(cmd_str);
+            let mut c = Command::new(&npm_path);
+            c.arg("run").arg("build");
             c.current_dir(&path);
+            
+            if node_path != "node" {
+                if let Some(parent) = std::path::Path::new(&node_path).parent() {
+                    let node_bin_dir = parent.to_string_lossy().to_string();
+                    let current_path = std::env::var("PATH").unwrap_or_default();
+                    let new_path = format!("{}:{}", node_bin_dir, current_path);
+                    c.env("PATH", new_path);
+                }
+            }
             c
         }
     };
