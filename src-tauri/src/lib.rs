@@ -122,12 +122,10 @@ fn find_node_path() -> String {
             return "node".to_string();
         }
         
-        // 2. Try interactive login shell to find node path on macOS/Linux
-        // Try zsh first (default on macOS)
+        // 2. Try zsh first (default on macOS) by explicitly sourcing zshrc
         let output = Command::new("zsh")
-            .arg("-l")
             .arg("-c")
-            .arg("which node")
+            .arg("source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null; which node")
             .output();
         if let Ok(out) = output {
             let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -138,9 +136,8 @@ fn find_node_path() -> String {
         
         // Try bash
         let output = Command::new("bash")
-            .arg("-l")
             .arg("-c")
-            .arg("which node")
+            .arg("source ~/.bash_profile 2>/dev/null; source ~/.bashrc 2>/dev/null; which node")
             .output();
         if let Ok(out) = output {
             let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -273,7 +270,12 @@ console.log(out.join('\n'));
                 "bash"
             };
             let mut cmd = Command::new(shell);
-            cmd.arg("-l").arg("-c").arg(format!("\"{}\" \"{}\" \"{}\"", node_path, temp_path, cfg.projects_base));
+            let cmd_str = format!(
+                "source ~/.{0}profile 2>/dev/null; source ~/.{0}rc 2>/dev/null; \"{1}\" \"{2}\" \"{3}\"",
+                if shell == "zsh" { "z" } else { "bash_" },
+                node_path, temp_path, cfg.projects_base
+            );
+            cmd.arg("-c").arg(cmd_str);
             cmd.output()
         }
     };
@@ -366,7 +368,12 @@ async fn start_project(name: String, path: String, port: u16, script: String, st
                 "bash"
             };
             let mut c = Command::new(shell);
-            c.arg("-l").arg("-c").arg(format!("npm run {}", active_script));
+            let cmd_str = format!(
+                "source ~/.{0}profile 2>/dev/null; source ~/.{0}rc 2>/dev/null; npm run {1}",
+                if shell == "zsh" { "z" } else { "bash_" },
+                active_script
+            );
+            c.arg("-c").arg(cmd_str);
             c.current_dir(&path);
             c.env("PORT", port.to_string());
             c
@@ -374,7 +381,8 @@ async fn start_project(name: String, path: String, port: u16, script: String, st
     };
     
     cmd.stdout(Stdio::piped())
-       .stderr(Stdio::piped());
+       .stderr(Stdio::piped())
+       .stdin(Stdio::null());
        
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
@@ -484,14 +492,19 @@ async fn build_project(name: String, path: String, state: State<'_, AppState>, a
                 "bash"
             };
             let mut c = Command::new(shell);
-            c.arg("-l").arg("-c").arg("npm run build");
+            let cmd_str = format!(
+                "source ~/.{0}profile 2>/dev/null; source ~/.{0}rc 2>/dev/null; npm run build",
+                if shell == "zsh" { "z" } else { "bash_" }
+            );
+            c.arg("-c").arg(cmd_str);
             c.current_dir(&path);
             c
         }
     };
     
     cmd.stdout(Stdio::piped())
-       .stderr(Stdio::piped());
+       .stderr(Stdio::piped())
+       .stdin(Stdio::null());
        
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000);
