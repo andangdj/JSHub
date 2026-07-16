@@ -4,6 +4,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=nextdotjs&logoColor=white&style=flat-square)](https://nextjs.org/)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust&logoColor=white&style=flat-square)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Hits](https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Fandangdj%2FJSHub&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false)](https://hits.seeyoufarm.com)
 
 **JSHub** is a cross-platform desktop application designed to help web developers instantly manage, monitor, and run local JavaScript/TypeScript projects from a single interactive dashboard.
 
