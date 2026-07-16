@@ -5,8 +5,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "JSHub",
-  description: "Universal Project Manager",
+  description: "Javascript Project Manager",
 };
 
 export default function RootLayout({

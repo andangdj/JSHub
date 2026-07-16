@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Power, RefreshCw, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -17,7 +18,13 @@ export default function Splash() {
   const [pendingUpdate, setPendingUpdate] = useState<any>(null);
 
   useEffect(() => {
-    getVersion().then(v => setAppVersion(v)).catch(() => setAppVersion('0.1.0'));
+    getVersion().then(v => {
+      setAppVersion(v);
+      getCurrentWindow().setTitle(`JSHub - v${v}`).catch(console.error);
+    }).catch((err) => {
+      console.error(err);
+      setAppVersion('');
+    });
   }, []);
 
   const checkAndUpdate = async () => {
@@ -93,11 +100,20 @@ export default function Splash() {
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.8, ease: "easeOut" }}
-        className="z-10 flex flex-col items-center gap-8"
+        className="z-10 flex flex-col items-center gap-6"
       >
-        <div className="text-center space-y-2">
-          <h1 className="text-6xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
-            JSHub
+        <div className="text-center flex flex-col items-center gap-4">
+          <motion.img 
+            src="/app-icon.png" 
+            alt="JSHub Icon" 
+            className="w-16 h-16 rounded-2xl shadow-[0_0_50px_rgba(247,223,30,0.15)]"
+            initial={{ rotate: -10, scale: 0.9 }}
+            animate={{ rotate: 0, scale: 1 }}
+            transition={{ duration: 0.5, type: "spring" }}
+          />
+          <h1 className="text-6xl font-extrabold tracking-tight">
+            <span className="text-[#ead114]">JS</span>
+            <span className="text-[#1dd25f]">Hub</span>
           </h1>
         </div>
 

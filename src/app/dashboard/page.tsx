@@ -3,6 +3,8 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getVersion } from '@tauri-apps/api/app';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { open as openUrl } from '@tauri-apps/plugin-shell';
 import { PowerOff, Play, Square, ExternalLink, Terminal, FolderOpen, FolderSearch, Hammer, Search } from 'lucide-react';
@@ -31,6 +33,7 @@ export default function Dashboard() {
   const [isWindows, setIsWindows] = useState(true);
   const [scriptMenuOpen, setScriptMenuOpen] = useState<string | null>(null);
   const [logFilter, setLogFilter] = useState('');
+  const [projectSearch, setProjectSearch] = useState('');
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const getFrameworkIcon = (frameworkStr: string) => {
@@ -66,6 +69,9 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    getVersion().then(v => {
+      getCurrentWindow().setTitle(`JSHub - v${v}`).catch(console.error);
+    }).catch(() => {});
     invoke('is_windows').then(res => setIsWindows(res as boolean)).catch(() => setIsWindows(true));
     fetchFolder();
     fetchProjects(true);
@@ -216,12 +222,86 @@ export default function Dashboard() {
   );
   const activeProjData = projects.find(p => p.name === activeProject);
 
+  const filteredProjects = projects.filter(p => 
+    p.name.toLowerCase().includes(projectSearch.toLowerCase())
+  );
+  const runningProjects = filteredProjects.filter(p => p.is_running);
+  const idleProjects = filteredProjects.filter(p => !p.is_running);
+
+  const renderProjectCard = (p: ProjectInfo) => (
+    <div 
+      key={p.name}
+      onClick={() => setActiveProject(p.name)}
+      className={`p-3 rounded-xl cursor-pointer border transition-all duration-300 relative ${activeProject === p.name ? 'bg-neutral-800 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-700'}`}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="font-semibold text-white truncate pr-2">{p.name}</span>
+        <span className={`w-2 h-2 rounded-full ${p.is_running ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-600'}`}></span>
+      </div>
+      <div className="flex items-center justify-between text-xs">
+        <div className="flex flex-col gap-1.5 mt-1">
+          <span className="text-neutral-500">Port: {p.port}</span>
+          <span className="flex items-center text-[10.5px] font-medium text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded-sm w-fit border border-indigo-500/20">
+            {getFrameworkIcon(p.framework)}
+            {p.framework}
+          </span>
+        </div>
+        
+        <div className="relative">
+          <button
+            onClick={(e) => handleStartClick(e, p)}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition-colors font-medium
+              ${p.is_running 
+                ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' 
+                : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
+          >
+            {p.is_running ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
+            {p.is_running ? 'Stop' : 'Start'}
+          </button>
+
+          {/* Scripts dropdown menu */}
+          {scriptMenuOpen === p.name && !p.is_running && (
+            <div 
+              onClick={(e) => e.stopPropagation()}
+              className="absolute right-0 top-full mt-1 w-44 bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden"
+            >
+              <div className="py-1.5 text-[10px] text-neutral-400 border-b border-neutral-700 px-2.5 font-bold uppercase tracking-wider">
+                Select Script
+              </div>
+              <div className="max-h-36 overflow-y-auto">
+                {p.scripts.map((script) => (
+                  <button
+                    key={script}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setScriptMenuOpen(null);
+                      toggleProject(p, script);
+                    }}
+                    className="w-full text-left px-3 py-2 text-white hover:bg-emerald-500/20 hover:text-emerald-400 transition-colors truncate text-xs font-mono"
+                  >
+                    npm run {script}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex h-screen bg-neutral-950 text-neutral-300 font-sans overflow-hidden">
       {/* Sidebar */}
       <div className="w-80 bg-neutral-900 border-r border-neutral-800 flex flex-col">
         <div className="p-6 border-b border-neutral-800 flex items-center justify-between">
-          <h2 className="text-xl font-bold text-emerald-400">JSHub</h2>
+          <div className="flex items-center gap-2.5">
+            <img src="/app-icon.png" alt="JSHub Icon" className="w-6 h-6 rounded-md shadow" />
+            <h2 className="text-xl font-bold tracking-tight">
+              <span className="text-[#ead114]">JS</span>
+              <span className="text-[#1dd25f]">Hub</span>
+            </h2>
+          </div>
           <div className="flex gap-2 items-center">
             {isWindows && (
               <button
@@ -262,77 +342,56 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* Project Search Input */}
+          {projects.length > 0 && (
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-neutral-500" />
+              <input
+                type="text"
+                placeholder="Cari project..."
+                value={projectSearch}
+                onChange={(e) => setProjectSearch(e.target.value)}
+                className="w-full bg-neutral-950 border border-neutral-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500/50 transition-all duration-300"
+              />
+            </div>
+          )}
+
           {isFetching ? (
             <div className="flex flex-col items-center justify-center py-10 text-neutral-500">
               <div className="w-8 h-8 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4"></div>
               <p className="text-sm animate-pulse">Scanning projects...</p>
             </div>
-          ) : projects.length === 0 ? (
+          ) : filteredProjects.length === 0 ? (
             <div className="text-center text-neutral-500 py-10 text-sm">
               <FolderOpen className="mx-auto mb-2 opacity-50" size={32} />
-              No projects found
+              {projects.length === 0 ? "No projects found" : "No matching projects"}
             </div>
-          ) : projects.map(p => (
-            <div 
-              key={p.name}
-              onClick={() => setActiveProject(p.name)}
-              className={`p-3 rounded-xl cursor-pointer border transition-all duration-300 relative ${activeProject === p.name ? 'bg-neutral-800 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-700'}`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-semibold text-white truncate pr-2">{p.name}</span>
-                <span className={`w-2 h-2 rounded-full ${p.is_running ? 'bg-emerald-500 animate-pulse' : 'bg-neutral-600'}`}></span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex flex-col gap-1.5 mt-1">
-                  <span className="text-neutral-500">Port: {p.port}</span>
-                  <span className="flex items-center text-[10.5px] font-medium text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded-sm w-fit border border-indigo-500/20">
-                    {getFrameworkIcon(p.framework)}
-                    {p.framework}
-                  </span>
+          ) : (
+            <div className="space-y-4">
+              {runningProjects.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 px-1 py-0.5">
+                    <span className="text-[9px] font-bold tracking-wider text-emerald-500 uppercase font-sans animate-pulse">Running</span>
+                    <hr className="w-full border-emerald-500/20" />
+                  </div>
+                  {runningProjects.map(p => renderProjectCard(p))}
                 </div>
-                
-                <div className="relative">
-                  <button
-                    onClick={(e) => handleStartClick(e, p)}
-                    className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition-colors font-medium
-                      ${p.is_running 
-                        ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' 
-                        : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
-                  >
-                    {p.is_running ? <Square size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" />}
-                    {p.is_running ? 'Stop' : 'Start'}
-                  </button>
+              )}
 
-                  {/* Scripts dropdown menu */}
-                  {scriptMenuOpen === p.name && !p.is_running && (
-                    <div 
-                      onClick={(e) => e.stopPropagation()}
-                      className="absolute right-0 top-full mt-1 w-44 bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl z-50 overflow-hidden"
-                    >
-                      <div className="py-1.5 text-[10px] text-neutral-400 border-b border-neutral-700 px-2.5 font-bold uppercase tracking-wider">
-                        Select Script
-                      </div>
-                      <div className="max-h-36 overflow-y-auto">
-                        {p.scripts.map((script) => (
-                          <button
-                            key={script}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setScriptMenuOpen(null);
-                              toggleProject(p, script);
-                            }}
-                            className="w-full text-left px-3 py-2 text-white hover:bg-emerald-500/20 hover:text-emerald-400 transition-colors truncate text-xs font-mono"
-                          >
-                            npm run {script}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+              {runningProjects.length > 0 && idleProjects.length > 0 && (
+                <div className="flex items-center gap-2 px-1 py-0.5">
+                  <span className="text-[9px] font-bold tracking-wider text-neutral-600 uppercase font-sans">Other Projects</span>
+                  <hr className="w-full border-neutral-800" />
                 </div>
-              </div>
+              )}
+
+              {idleProjects.length > 0 && (
+                <div className="space-y-2">
+                  {idleProjects.map(p => renderProjectCard(p))}
+                </div>
+              )}
             </div>
-          ))}
+          )}
         </div>
       </div>
 

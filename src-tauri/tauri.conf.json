@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "JSHub",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "identifier": "com.jshub.app",
   "build": {
     "frontendDist": "../out",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "title": "JSHub",
-        "width": 800,
+        "width": 1000,
         "height": 600,
         "resizable": true,
         "fullscreen": false
